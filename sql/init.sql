@@ -33,7 +33,23 @@ CREATE TABLE IF NOT EXISTS dwh.fact_reviews (
 );
 
 -- ── Indexes ───────────────────────────────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_reviews_product  ON dwh.fact_reviews(product_id); 
+CREATE INDEX IF NOT EXISTS idx_reviews_product  ON dwh.fact_reviews(product_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_user     ON dwh.fact_reviews(user_id);
 CREATE INDEX IF NOT EXISTS idx_product_category ON dwh.dim_product(category);
-CREATE INDEX IF NOT EXISTS idx_product_rating   ON dwh.dim_product(rating); 
+CREATE INDEX IF NOT EXISTS idx_product_rating   ON dwh.dim_product(rating);
+
+-- ── Foreign Keys ──────────────────────────────────────────────────────────────
+ALTER TABLE dwh.fact_reviews
+    ADD CONSTRAINT fk_review_product FOREIGN KEY (product_id) REFERENCES dwh.dim_product(product_id),
+    ADD CONSTRAINT fk_review_user    FOREIGN KEY (user_id)    REFERENCES dwh.dim_reviewer(user_id);
+
+-- ── Streaming KPIs (Kafka / Spark Structured Streaming) ────────────────────────
+CREATE TABLE IF NOT EXISTS dwh.fact_streaming_kpis (
+    window_start TIMESTAMPTZ NOT NULL,
+    metric        TEXT        NOT NULL,
+    key           TEXT        NOT NULL,
+    value         DOUBLE PRECISION
+);
+
+CREATE INDEX IF NOT EXISTS idx_streaming_window ON dwh.fact_streaming_kpis(window_start);
+CREATE INDEX IF NOT EXISTS idx_streaming_metric ON dwh.fact_streaming_kpis(metric);

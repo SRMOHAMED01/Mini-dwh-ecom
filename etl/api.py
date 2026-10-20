@@ -6,10 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 #crée la connexion vers PostgreSQL text → permet d’écrire du SQL brut proprement
 from sqlalchemy import create_engine, text
 
-#connection a la base de données Si elle n’existe pas → on utilise "postgres".
 DB_HOST = os.getenv("DB_HOST", "postgres")
-#C’est l’URL de connexion PostgreSQL.
-DB_URL  = f"postgresql://dwh_user:dwh_pass@{DB_HOST}:5432/ecommerce_dwh"
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_USER = os.getenv("DB_USER", "dwh_user")
+DB_PASS = os.getenv("DB_PASS", "12345")
+DB_NAME = os.getenv("DB_NAME", "ecommerce_dwh")
+DB_URL  = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 #On crée le moteur de connexion SQLAlchemy. 👉 C’est lui qui permet d’envoyer du SQL à PostgreSQL.
 engine = create_engine(DB_URL)
 app    = FastAPI(title="Amazon DWH API")
@@ -23,9 +25,9 @@ app.add_middleware(
 )
 
 
-def query(sql: str):
+def query(sql: str, params=None):
     with engine.connect() as conn:
-        result = conn.execute(text(sql))
+        result = conn.execute(text(sql), params or {})
         #On récupère les noms des colonnes.
         cols = result.keys()
         #On transforme les résultats en liste de dicts (une ligne = un dict)
@@ -110,3 +112,20 @@ def discount_distribution():
         GROUP BY bucket
         ORDER BY bucket
     """)
+
+
+@app.get("/api/streaming-kpis")
+def streaming_kpis(limit: int = 100):
+    """Latest streaming KPI rows from Kafka / Spark Structured Streaming."""
+    sql = """
+        SELECT window_start, metric, key, value
+        FROM dwh.fact_streaming_kpis
+        ORDER BY window_start DESC
+        LIMIT :limit
+    """
+    return query(sql, {"limit": limit})
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}

@@ -115,18 +115,23 @@ def run_etl():
     for _, row in df.iterrows():
         pid = row["product_id"]
 
-        def split(field):
+        def split(field, join_remainder=False, expected_n=None):
             raw = row.get(field, "")
-            return [v.strip() for v in str(raw).split(",")] if pd.notna(raw) else []
+            parts = [v.strip() for v in str(raw).split(",")] if pd.notna(raw) else []
+            # review_content is free text and may contain commas.
+            # If it produced more segments than expected, re-join the tail
+            # so alignment with the other fields is preserved.
+            if join_remainder and expected_n is not None and len(parts) > expected_n:
+                parts = parts[:expected_n - 1] + [",".join(parts[expected_n - 1:])]
+            return parts
 
         user_ids      = split("user_id")
+        n = len(user_ids)
         user_names    = split("user_name")
         review_ids    = split("review_id")
         review_titles = split("review_title")
-        # review_content may contain commas too — we keep it as-is per reviewer index
-        rev_contents  = split("review_content")
+        rev_contents  = split("review_content", join_remainder=True, expected_n=n)
 
-        n = len(user_ids)
         for i in range(n):
             uid    = user_ids[i]
             uname  = user_names[i]  if i < len(user_names)    else ""
