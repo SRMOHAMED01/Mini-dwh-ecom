@@ -155,7 +155,7 @@ services:
   # 5. Amazon API Producer (simulated SP-API)
   # ══════════════════════════════════════════
   amazon-producer:
-    build: ./etl
+    build: ./kafka
     container_name: dwh_amazon_producer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -172,7 +172,7 @@ services:
   # 6. E-commerce Website Producer (user events)
   # ══════════════════════════════════════════
   ecommerce-producer:
-    build: ./etl
+    build: ./kafka
     container_name: dwh_ecommerce_producer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -189,7 +189,7 @@ services:
   # 7. Kafka Consumer → PostgreSQL (streaming KPIs)
   # ══════════════════════════════════════════
   kafka-consumer:
-    build: ./etl
+    build: ./kafka
     container_name: dwh_kafka_consumer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -209,3 +209,27 @@ services:
     networks:
       - dwh_network
     command: python kafka_consumer.py
+
+  # ══════════════════════════════════════════
+  # 8. Spark Structured Streaming → PostgreSQL
+  # ══════════════════════════════════════════
+  spark-streaming:
+    build: ./spark
+    container_name: dwh_spark_streaming
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_PRODUCTS: amazon.products
+      KAFKA_TOPIC_EVENTS: ecommerce.events
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: dwh_user
+      DB_PASS: 12345
+      DB_NAME: ecommerce_dwh
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - dwh_network
+    command: ["spark-submit", "spark_streaming.py"]
