@@ -1,98 +1,123 @@
-# Mini DWH E-commerce
+# 🛒 E-Commerce Decision Intelligence Platform
 
-A mini Data Warehouse for Amazon product & review data, with an ETL pipeline, a FastAPI backend, and a React dashboard.
+An End-to-End E-Commerce Decision Intelligence Platform featuring a **Hybrid Batch & Streaming Lakehouse (PostgreSQL, Kafka, PySpark)**, **NLP Customer Sentiment Analysis**, **Real-Time Conversion Funnel Analytics**, and an **Executive Decision Cockpit**.
 
-## Architecture
+---
 
+## 🏛️ System Architecture
+
+```text
+[ amazon.csv ] ─────────────────► [ Batch ETL + NLTK VADER ] ─────┐
+                                                                   ▼
+[ Simulated E-Commerce Users ] ─► [ Kafka: ecommerce.events ] ──► [ PostgreSQL 15 DWH ]
+                                                                   ▲
+[ Simulated Amazon SP-API ] ────► [ Kafka: amazon.products ]  ───┤
+                                                                   │
+                                  [ Kafka / Spark Streaming ] ────┘
+                                           │
+                                           ▼
+                                [ FastAPI Backend (8000) ]
+                                           │
+                                           ▼
+                       [ React 19 Executive Decision Cockpit (5173) ]
 ```
-amazon.csv ──► [ETL container] ──► PostgreSQL (DWH) ──► FastAPI ──► React Dashboard
-```
 
-- **PostgreSQL 15** — stores `dwh.dim_product`, `dwh.dim_reviewer`, `dwh.fact_reviews`
-- **ETL** (`etl/main.py`) — reads `amazon.csv`, cleans it, upserts into the DWH
-- **API** (`etl/api.py`) — FastAPI exposing `/api/*` endpoints
-- **Frontend** — React + Vite + Recharts dashboard
+### Core Architecture Components:
+- **PostgreSQL 15 (Lakehouse / DWH)**:
+  - `dwh.dim_product`: Catalog info (prices, ratings, categories, discount tiers).
+  - `dwh.dim_reviewer`: Customer profiles.
+  - `dwh.fact_reviews`: Fact table with **VADER Sentiment Scores (-1 to +1)**, sentiment labels, and **Review Divergence Flags** (identifies fake reviews or product defects).
+  - `dwh.fact_funnel_kpis`: Real-time conversion funnel (Views $\to$ Cart Adds $\to$ Purchases $\to$ Cart Abandonment, and Live GMV).
+  - `dwh.fact_streaming_kpis`: Sliding window aggregations from Kafka.
+  - `dwh.v_product_sentiment_summary` & `dwh.v_category_performance`: Analytical views.
+- **Data Ingestion & Processing**:
+  - `pipelines/batch/`: Batch ingestion pipeline with numeric cleaners and NLTK VADER sentiment scoring.
+  - `pipelines/streaming/producers/`: Realistic catalog-aware clickstream and catalog update producers.
+  - `pipelines/streaming/consumer/`: Windowed stream aggregation engine computing live conversion rates and GMV.
+  - `pipelines/streaming/spark/`: PySpark Structured Streaming consumer.
+- **Serving Layer**:
+  - `backend/`: FastAPI application exposing modular endpoints under `/api/v1` and `/api` with CORS support and Server-Sent Events (SSE).
+- **Presentation Layer**:
+  - `frontend/`: React 19 + Vite + Recharts dashboard with Executive Overview, NLP Review Intelligence, Conversion Funnel, and Live Clickstream Ticker.
 
-## Quick start
+---
+
+## 🚀 Quick Start
+
+Run the entire platform with a single command:
 
 ```bash
-docker compose up
+docker compose up --build
 ```
 
-Then open the dashboard at http://localhost:5173 and the API docs at http://localhost:8000/docs.
+Once running, access:
+- **Executive Decision Cockpit (Frontend)**: [http://localhost:5173](http://localhost:5173)
+- **FastAPI Interactive Docs (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **FastAPI Alternative Docs (ReDoc)**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- **API Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
+- **PostgreSQL Database**: `localhost:5432` (`dwh_user` / `12345`, DB: `ecommerce_dwh`)
 
-## Project structure
+---
 
-```
+## 📁 Project Structure
+
+```text
 .
-├── docker-compose.yml
-├── amazon.csv              # source data
-├── sql/
-│   └── init.sql            # schema (dimensions + facts)
-├── etl/
-│   ├── main.py             # ETL pipeline
-│   ├── api.py              # FastAPI backend
+├── backend/                             # Dedicated FastAPI Service
+│   ├── app/
+│   │   ├── api/v1/                      # Modular API endpoints (kpis, sentiment, funnel, streaming)
+│   │   ├── core/                        # Settings & configurations
+│   │   ├── db/                          # Database connection pool & session
+│   │   └── main.py                      # FastAPI application entrypoint
 │   ├── Dockerfile
 │   └── requirements.txt
-└── frontend/               # React + Vite app
+├── pipelines/
+│   ├── batch/                           # Batch Ingestion & NLP Analysis
+│   │   ├── cleaners.py                  # Modular numeric & string cleaning
+│   │   ├── sentiment.py                 # NLTK VADER sentiment extraction & divergence detection
+│   │   ├── main.py                      # Batch pipeline orchestrator
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   └── streaming/                       # Event Streaming & Real-Time Aggregation
+│       ├── producers/                   # Catalog-aware clickstream & SP-API producers
+│       ├── consumer/                    # Kafka consumer with funnel & GMV aggregation
+│       ├── spark/                       # PySpark Structured Streaming consumer
+│       ├── Dockerfile
+│       └── requirements.txt
+├── frontend/                            # React 19 + Vite Dashboard
+│   ├── src/
+│   │   ├── App.jsx                      # Executive Decision Cockpit (Tabs: Overview, NLP, Funnel, Stream)
+│   │   ├── App.css                      # Styling for cockpit, badges, feed, and modals
+│   │   └── index.css                    # Design tokens & dark/light theme variables
+│   ├── Dockerfile
+│   └── package.json
+├── sql/
+│   └── init.sql                         # PostgreSQL schema (dimensions, facts, views, indexes)
+├── amazon.csv                           # Historical Amazon catalog & review dataset
+├── docker-compose.yml                   # Full-stack container orchestration
+├── .env.example
+├── README.md
+└── TODO.md
 ```
 
-## Data model
+---
 
-| Table | Type | Description |
-|-------|------|-------------|
-| `dwh.dim_product` | Dimension | Product info (price, rating, category) |
-| `dwh.dim_reviewer` | Dimension | Reviewer info |
-| `dwh.fact_reviews` | Fact | Reviews linking products to reviewers |
+## 📡 API Endpoints
 
-## API endpoints
+### Core KPIs & Analytics
+- `GET /api/v1/kpi-summary`: High-level business metrics (products, average rating, discount %, sentiment score).
+- `GET /api/v1/top-categories`: Top 10 categories with volume and pricing metrics.
+- `GET /api/v1/top-rated-products`: High-volume products ($\ge 500$ ratings) sorted by rating.
+- `GET /api/v1/most-reviewed`: Top 10 most-reviewed products.
+- `GET /api/v1/discount-distribution`: Products grouped into discount percentage tiers.
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/kpi-summary` | Total products, avg rating, avg discount, total reviews |
-| `GET /api/top-categories` | Top 10 categories by product count |
-| `GET /api/top-rated-products` | Top 10 rated products (≥ 500 ratings) |
-| `GET /api/most-reviewed` | Top 10 most-reviewed products |
-| `GET /api/discount-distribution` | Discount bucket distribution |
+### NLP Sentiment & Review Intelligence
+- `GET /api/v1/sentiment/overview`: Global sentiment ratios (Positive / Neutral / Negative / Divergent %).
+- `GET /api/v1/sentiment/divergent-products`: Suspicious products with high star ratings ($\ge 4.0$) but negative review content.
+- `GET /api/v1/sentiment/product/{id}`: Detailed review breakdown with sentiment tags for a specific product.
 
-## TODO — Improvements
-
-### Data quality & ETL
-- [ ] Add data validation (reject rows with missing required fields)
-- [ ] Handle `review_content` containing commas properly (current split-by-comma approach can corrupt content)
-- [ ] Add incremental loads instead of full reloads
-- [ ] Add logging + error reporting (currently only prints to stdout)
-- [ ] Add unit tests for cleaning functions (`clean_price`, `clean_pct`, etc.)
-
-### Backend
-- [ ] Use environment variables in `api.py` (currently hardcoded `dwh_user:dwh_pass`)
-- [ ] Add pagination to list endpoints
-- [ ] Add authentication (API key / JWT)
-- [ ] Add SQLAlchemy models instead of raw SQL strings
-- [ ] Add rate limiting
-- [ ] Add OpenAPI docs customization / health check endpoint
-
-### Database
-- [ ] Add foreign keys (`fact_reviews.product_id → dim_product`, `fact_reviews.user_id → dim_reviewer`)
-- [ ] Add `created_at` / `updated_at` timestamps
-- [ ] Add partitioning for large fact tables
-- [ ] Add materialized views for slow KPI queries
-- [ ] Add a proper ETL job scheduler (Airflow / Prefect / cron)
-
-### Frontend
-- [ ] Add product detail page with review list
-- [ ] Add search & filtering (by category, price range, rating)
-- [ ] Add loading skeletons / error states
-- [ ] Add most-reviewed chart (data is fetched but not displayed)
-- [ ] Use environment variable for API URL instead of hardcoded `localhost:8000`
-- [ ] Add responsive design for mobile
-- [ ] Add dark mode
-
-### DevOps / Observability
-- [ ] Add `.env.example` files
-- [ ] Add GitLab/GitHub CI pipeline (lint, build, test)
-- [ ] Add Docker `.dockerignore`
-- [ ] Use non-root user in containers
-- [ ] Add secrets management (Docker secrets / env vault) for DB password
-- [ ] Add database backup strategy
-- [ ] Add structured logging (JSON) and centralization
+### Conversion Funnel & Real-Time Streaming
+- `GET /api/v1/funnel/latest`: Cumulative conversion funnel metrics ($\text{Views} \to \text{Cart Adds} \to \text{Purchases}$, Cart Abandonment Rate, and GMV).
+- `GET /api/v1/funnel/history`: Historical funnel window timelines.
+- `GET /api/v1/streaming/kpis`: Latest sliding window streaming metrics.
+- `GET /api/v1/streaming/live-feed`: Server-Sent Events (SSE) stream for live ticking orders and GMV.

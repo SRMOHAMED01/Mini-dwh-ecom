@@ -1,126 +1,101 @@
-# docker-compose.yml
-# Ce fichier orchestre tous les conteneurs du projet avec une seule commande : "docker compose up"
+version: "3.9"
 
-version: "3.9"  # Version de la syntaxe docker-compose utilisée
-
-# ══════════════════════════════════════════
-# RÉSEAU PARTAGÉ
-# Les conteneurs dans le même réseau peuvent se parler par leur nom de service
-# Ex : le conteneur ETL peut joindre postgres en utilisant l'hôte "postgres"
-# ══════════════════════════════════════════
 networks:
-  dwh_network:       # Nom du réseau interne créé par Docker
-    driver: bridge   # Type "bridge" = réseau privé virtuel entre les conteneurs
+  dwh_network:
+    driver: bridge
 
-# ══════════════════════════════════════════
-# VOLUMES PERSISTANTS
-# Un volume = un dossier géré par Docker qui survit aux arrêts/redémarrages
-# Sans volume, toutes les données PostgreSQL seraient perdues à chaque "docker compose down"
-# ══════════════════════════════════════════
 volumes:
-  postgres_data:   # Nom du volume qui stocke les fichiers de la base de données PostgreSQL
+  postgres_data:
 
-# ══════════════════════════════════════════
-# SERVICES (= conteneurs)
-# Chaque service est un conteneur Docker indépendant
-# ══════════════════════════════════════════
 services:
 
-  # ══════════════════════════════════════════
-  # 1. BASE DE DONNÉES PostgreSQL
-  # Responsabilité : stocker toutes les tables du Data Warehouse
-  # ══════════════════════════════════════════
+  # ══════════════════════════════════════════════════════════
+  # 1. PostgreSQL Lakehouse / DWH
+  # ══════════════════════════════════════════════════════════
   postgres:
-    image: postgres:15                  # Utilise l'image officielle PostgreSQL version 15 (téléchargée depuis Docker Hub)
-    container_name: dwh_postgres        # Nom fixe du conteneur (utile pour "docker logs dwh_postgres")
-    restart: always                     # Redémarre automatiquement si le conteneur plante ou si Docker redémarre
-    environment:                        # Variables d'environnement injectées dans le conteneur au démarrage
-      POSTGRES_USER: dwh_user           # Nom de l'utilisateur créé automatiquement dans PostgreSQL
-      POSTGRES_PASSWORD: 12345      # Mot de passe de cet utilisateur
-      POSTGRES_DB: ecommerce_dwh        # Nom de la base de données créée automatiquement au premier démarrage
+    image: postgres:15
+    container_name: dwh_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: dwh_user
+      POSTGRES_PASSWORD: "12345"
+      POSTGRES_DB: ecommerce_dwh
     ports:
-      - "5432:5432"                     # Expose le port PostgreSQL : "port_hôte:port_conteneur"
-                                        # Permet de se connecter depuis ta machine avec un outil comme DBeaver
+      - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data          # Monte le volume persistant pour sauvegarder les données
-                                                        # /var/lib/postgresql/data = là où PostgreSQL stocke ses fichiers
-      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql  # Monte ton script SQL dans un dossier spécial
-                                                              # PostgreSQL exécute automatiquement tous les .sql de ce dossier
-                                                              # au tout premier démarrage (création des tables)
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
-      - dwh_network    # Connecte ce conteneur au réseau interne pour qu'il soit joignable par les autres
-    healthcheck:       # Vérifie régulièrement que PostgreSQL est vraiment prêt à accepter des connexions
+      - dwh_network
+    healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dwh_user -d ecommerce_dwh"]
-                       # pg_isready = commande officielle PostgreSQL qui retourne OK si la DB accepte des connexions
-      interval: 5s     # Vérifie toutes les 5 secondes
-      timeout: 5s      # Si pas de réponse en 5s → considéré comme échoué
-      retries: 10      # Essaie 10 fois avant de déclarer le service "unhealthy" (50s max au total)
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-  # ══════════════════════════════════════════
-  # 2. ETL — Extract, Transform, Load
-  # Responsabilité : lire amazon.csv, nettoyer les données, les insérer en base
-  # Ce conteneur tourne UNE SEULE FOIS puis s'arrête (exit 0)
+  # ══════════════════════════════════════════════════════════
+  # 2. Batch ETL Pipeline with NLP Sentiment Analysis
   # ══════════════════════════════════════════
   etl:
-    build: ./etl              # Construit l'image depuis le Dockerfile situé dans le dossier ./etl
-                              # (pas d'image toute faite, on la crée nous-mêmes)
-    container_name: dwh_etl   # Nom fixe du conteneur
-    environment:              # Variables d'environnement lues par main.py via os.getenv(...)
-      DB_HOST: postgres       # Nom du service PostgreSQL sur le réseau Docker (PAS "localhost" !)
-      DB_PORT: 5432           # Port PostgreSQL standard
-      DB_USER: dwh_user       # Même utilisateur que défini dans le service postgres ci-dessus
-      DB_PASS: 12345       # Même mot de passe
-      DB_NAME: ecommerce_dwh  # Même nom de base de données
-      CSV_PATH: /data/amazon.csv  # Chemin vers le CSV à l'intérieur du conteneur
-    volumes:
-      - ./amazon.csv:/data/amazon.csv:ro  # Monte le fichier CSV local dans le conteneur
-                                          # ./amazon.csv = chemin sur ta machine
-                                          # /data/amazon.csv = chemin vu depuis le conteneur
-                                          # :ro = read-only (le conteneur peut lire mais pas modifier le fichier)
-    depends_on:
-      postgres:
-        condition: service_healthy   # N'ATTEND PAS juste que postgres "démarre",
-                                     # mais attend que le healthcheck soit "healthy"
-                                     # → garantit que PostgreSQL est prêt avant d'insérer des données
-    networks:
-      - dwh_network        # Même réseau → peut joindre "postgres" par son nom
-    command: python main.py  # Override la commande par défaut du Dockerfile pour lancer l'ETL
-
-  # ══════════════════════════════════════════
-  # 3. API FastAPI
-  # Responsabilité : exposer les données du DWH via des endpoints HTTP/JSON
-  # Ce conteneur tourne EN CONTINU (serveur web)
-  # ══════════════════════════════════════════
-  api:
-    build: ./etl              # Utilise le MÊME Dockerfile que l'ETL (même image Python + dépendances)
-                              # La différence : la commande de démarrage est différente (uvicorn au lieu de python)
-    container_name: dwh_api   # Nom fixe du conteneur
-    environment:              # Même variables de connexion DB que l'ETL (api.py en a besoin pour les requêtes SQL)
+    build: ./pipelines/batch
+    container_name: dwh_batch_etl
+    environment:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: dwh_user
-      DB_PASS: 12345
+      DB_PASS: "12345"
       DB_NAME: ecommerce_dwh
-    ports:
-      - "8000:8000"           # Expose le port 8000 : accessible depuis ton navigateur sur http://localhost:8000
+      CSV_PATH: /data/amazon.csv
+    volumes:
+      - ./amazon.csv:/data/amazon.csv:ro
     depends_on:
       postgres:
-        condition: service_healthy              # Attend que PostgreSQL soit prêt
-      etl:
-        condition: service_completed_successfully  # Attend que l'ETL ait FINI avec succès (exit 0)
-                                                   # → garantit que les tables sont remplies avant de servir l'API
+        condition: service_healthy
     networks:
-      - dwh_network    # Même réseau → peut joindre "postgres" par son nom
-    command: uvicorn api:app --host 0.0.0.0 --port 8000 --reload
-             # uvicorn = serveur ASGI (comme Gunicorn mais pour async Python)
-             # api:app = fichier api.py, objet "app" (l'instance FastAPI)
-             # --host 0.0.0.0 = écoute sur toutes les interfaces (obligatoire dans Docker, sinon inaccessible de l'extérieur)
-             # --port 8000 = port d'écoute
-             # --reload = redémarre automatiquement si tu modifies api.py (pratique en développement)
+      - dwh_network
+    command: python main.py
 
-  # ══════════════════════════════════════════
-  # 4. Apache Kafka (event streaming backbone)
-  # ══════════════════════════════════════════
+  # ══════════════════════════════════════════════════════════
+  # 3. Backend API (FastAPI)
+  # ══════════════════════════════════════════════════════════
+  api:
+    build: ./backend
+    container_name: dwh_api
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: dwh_user
+      DB_PASS: "12345"
+      DB_NAME: ecommerce_dwh
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      etl:
+        condition: service_completed_successfully
+    networks:
+      - dwh_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ══════════════════════════════════════════════════════════
+  # 4. Frontend Dashboard (React 19 + Vite)
+  # ══════════════════════════════════════════════════════════
+  frontend:
+    build: ./frontend
+    container_name: dwh_frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - api
+    networks:
+      - dwh_network
+
+  # ══════════════════════════════════════════════════════════
+  # 5. Apache Kafka & Zookeeper
+  # ══════════════════════════════════════════════════════════
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
     container_name: dwh_zookeeper
@@ -151,16 +126,16 @@ services:
       timeout: 10s
       retries: 10
 
-  # ══════════════════════════════════════════
-  # 5. Amazon API Producer (simulated SP-API)
-  # ══════════════════════════════════════════
+  # ══════════════════════════════════════════════════════════
+  # 6. Real-Time Producers
+  # ══════════════════════════════════════════════════════════
   amazon-producer:
-    build: ./kafka
+    build: ./pipelines/streaming
     container_name: dwh_amazon_producer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC_PRODUCTS: amazon.products
-      COUNT: 50
+      COUNT: 100
     depends_on:
       kafka:
         condition: service_healthy
@@ -168,16 +143,16 @@ services:
       - dwh_network
     command: python producers/amazon_producer.py
 
-  # ══════════════════════════════════════════
-  # 6. E-commerce Website Producer (user events)
-  # ══════════════════════════════════════════
   ecommerce-producer:
-    build: ./kafka
+    build: ./pipelines/streaming
     container_name: dwh_ecommerce_producer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC_EVENTS: ecommerce.events
-      COUNT: 100
+      CSV_PATH: /data/amazon.csv
+      COUNT: 200
+    volumes:
+      - ./amazon.csv:/data/amazon.csv:ro
     depends_on:
       kafka:
         condition: service_healthy
@@ -185,11 +160,11 @@ services:
       - dwh_network
     command: python producers/ecommerce_producer.py
 
-  # ══════════════════════════════════════════
-  # 7. Kafka Consumer → PostgreSQL (streaming KPIs)
-  # ══════════════════════════════════════════
+  # ══════════════════════════════════════════════════════════
+  # 7. Streaming Consumer (Funnel & GMV Windowing)
+  # ══════════════════════════════════════════════════════════
   kafka-consumer:
-    build: ./kafka
+    build: ./pipelines/streaming
     container_name: dwh_kafka_consumer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
@@ -198,9 +173,9 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: dwh_user
-      DB_PASS: 12345
+      DB_PASS: "12345"
       DB_NAME: ecommerce_dwh
-      WINDOW_SECONDS: 30
+      WINDOW_SECONDS: 20
     depends_on:
       postgres:
         condition: service_healthy
@@ -208,28 +183,4 @@ services:
         condition: service_healthy
     networks:
       - dwh_network
-    command: python kafka_consumer.py
-
-  # ══════════════════════════════════════════
-  # 8. Spark Structured Streaming → PostgreSQL
-  # ══════════════════════════════════════════
-  spark-streaming:
-    build: ./spark
-    container_name: dwh_spark_streaming
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_TOPIC_PRODUCTS: amazon.products
-      KAFKA_TOPIC_EVENTS: ecommerce.events
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: dwh_user
-      DB_PASS: 12345
-      DB_NAME: ecommerce_dwh
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    networks:
-      - dwh_network
-    command: ["spark-submit", "spark_streaming.py"]
+    command: python consumer/kafka_consumer.py
